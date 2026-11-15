@@ -307,6 +307,8 @@ Page {
                         id: bookOptionsPopup
 
                         onDownloadClicked: {
+                            LibraryController.downloadBookMedia(
+                                        Globals.selectedBook.uuid)
                             close()
                         }
 

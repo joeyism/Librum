@@ -1,0 +1,57 @@
+diff --git a/scripts/wrap/cpp.py b/scripts/wrap/cpp.py
+index a3dfb0103..b2ff4c644 100644
+--- a/scripts/wrap/cpp.py
++++ b/scripts/wrap/cpp.py
+@@ -6,6 +6,8 @@ import io
+ import os
+ import pickle
+ import re
++import shutil
++import subprocess
+ import textwrap
+ 
+ import jlib
+@@ -5007,6 +5009,22 @@ def cpp_source(
+                 '-D', 'MUPDF_WRAP_LIBCLANG',
+                 '-D', 'FZ_FUNCTION=',
+                 ]
++        # pip libclang has no builtin headers; without these, parse dies on
++        # <stddef.h> and emits an empty C++ API.
++        for name in ('clang', 'clang-18', 'clang-17', 'clang-16'):
++            clang = shutil.which(name)
++            if clang:
++                try:
++                    resource_dir = subprocess.check_output(
++                            [clang, '-print-resource-dir'],
++                            text=True,
++                            ).strip()
++                    args += ['-isystem', os.path.join(resource_dir, 'include')]
++                except (subprocess.CalledProcessError, OSError):
++                    pass
++                break
++        if os.path.isdir('/usr/include'):
++            args += ['-isystem', '/usr/include']
+         tu = index.parse(
+                 temp_h,
+                 args = args,
+diff --git a/scripts/wrap/parse.py b/scripts/wrap/parse.py
+index 2433d47fe..a222351b7 100644
+--- a/scripts/wrap/parse.py
++++ b/scripts/wrap/parse.py
+@@ -70,10 +70,13 @@ def get_children(cursor):
+     for cursor in cursor.get_children():
+         #verbose = state.state_.show_details( cursor.spelling)
+         #verbose = 1
+-        if cursor.kind == clang.cindex.CursorKind.UNEXPOSED_DECL:
++        if cursor.kind in (
++                clang.cindex.CursorKind.UNEXPOSED_DECL,
++                clang.cindex.CursorKind.LINKAGE_SPEC,
++        ):
+             # Things tagged with `extern "C" appear to be within this
+-            # cursor.
+-            for cursor2 in cursor.get_children():
++            # cursor. Clang 18 reports that as LINKAGE_SPEC, not UNEXPOSED_DECL.
++            for cursor2 in get_children(cursor):
+                 if verbose and cursor.spelling:
+                     jlib.log( '{cursor.spelling=}')
+                 yield cursor2

@@ -66,6 +66,7 @@ set(application_SRC
     utility/error_code_converter.hpp
     utility/book_utils.hpp
     utility/save_book_helper.hpp
+    utility/touch_selection_session.hpp
     
     core/page_generator.hpp
     core/page_generator.cpp
@@ -116,8 +117,9 @@ set(CC_COMMAND "${CMAKE_C_COMPILER}")
 set(CXX_COMMAND "${CMAKE_CXX_COMPILER}")
 
 if(ANDROID)
-    string(APPEND CC_COMMAND " --target=aarch64-none-linux-android23 --sysroot=/home/creapermann/Android/Sdk/ndk/26.1.10909125/toolchains/llvm/prebuilt/linux-x86_64/sysroot")
-    string(APPEND CXX_COMMAND " --target=aarch64-none-linux-android23 --sysroot=/home/creapermann/Android/Sdk/ndk/26.1.10909125/toolchains/llvm/prebuilt/linux-x86_64/sysroot")
+    set(NDK_LLVM "${ANDROID_NDK}/toolchains/llvm/prebuilt/linux-x86_64")
+    set(CC_COMMAND "${NDK_LLVM}/bin/aarch64-linux-android23-clang")
+    set(CXX_COMMAND "${NDK_LLVM}/bin/aarch64-linux-android23-clang++")
 endif()
 
 
@@ -130,17 +132,43 @@ else()
 endif()
 
 
-add_custom_target(mupdf
-   COMMAND ${CMAKE_COMMAND} -E env
-        "CC=${CC_COMMAND}"
-        "CXX=${CXX_COMMAND}"
-        "USE_SYSTEM_LIBJPEG=${USE_SYSTEM_LIBJPEG_VALUE}"
-        "USE_SONAME=no"
-        ${MUPDF_BUILD_COMMAND}
-   BYPRODUCTS ${MUPDF_OUTPUT}
-   WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}/libs/mupdf
-   COMMENT "Building mupdf (This takes a while) ..."
-)
+if(ANDROID)
+    # libclang (wrapper generation) needs host stddef.h. Compiling the C/C++
+    # libraries uses the NDK clang wrappers.
+    add_custom_target(mupdf
+       COMMAND ${CMAKE_COMMAND}
+            -D PATCH_FILE=${PROJECT_SOURCE_DIR}/cmake/patches/mupdf-wrap-libclang.patch
+            -D WORK_DIR=${PROJECT_SOURCE_DIR}/libs/mupdf
+            -P ${PROJECT_SOURCE_DIR}/cmake/patches/apply_mupdf_wrap.cmake
+       COMMAND ${CMAKE_COMMAND} -E env --unset=CC --unset=CXX
+            ./scripts/mupdfwrap.py ${VENV_OPTION}
+            -d build/$<IF:$<CONFIG:Debug>,shared-debug,shared-release>
+            -b 0
+       COMMAND ${CMAKE_COMMAND} -E env
+            "CC=${CC_COMMAND}"
+            "CXX=${CXX_COMMAND}"
+            "USE_SYSTEM_LIBJPEG=${USE_SYSTEM_LIBJPEG_VALUE}"
+            "USE_SONAME=no"
+            ./scripts/mupdfwrap.py ${VENV_OPTION}
+            -d build/$<IF:$<CONFIG:Debug>,shared-debug,shared-release>
+            -b --m-target libs ${EXTRA_MAKE_AGRS} -j 0 m1
+       BYPRODUCTS ${MUPDF_OUTPUT}
+       WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}/libs/mupdf
+       COMMENT "Building mupdf for Android (This takes a while) ..."
+    )
+else()
+    add_custom_target(mupdf
+       COMMAND ${CMAKE_COMMAND} -E env
+            "CC=${CC_COMMAND}"
+            "CXX=${CXX_COMMAND}"
+            "USE_SYSTEM_LIBJPEG=${USE_SYSTEM_LIBJPEG_VALUE}"
+            "USE_SONAME=no"
+            ${MUPDF_BUILD_COMMAND}
+       BYPRODUCTS ${MUPDF_OUTPUT}
+       WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}/libs/mupdf
+       COMMENT "Building mupdf (This takes a while) ..."
+    )
+endif()
 
 
 #Copy the mupdf dlls to the build directory for windows

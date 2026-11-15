@@ -132,6 +132,21 @@ Item {
                 }
             }
 
+            MouseArea {
+                id: coverTapArea
+                anchors.fill: parent
+                z: 10
+                preventStealing: true
+                onClicked: {
+                    if (Globals.bookSelectionModeEnabled) {
+                        checkBox.checked = !checkBox.checked
+                        Globals.selectedBooks.push(model.uuid)
+                        return
+                    }
+                    root.leftButtonClicked(index)
+                }
+            }
+
             MProgressBar {
                 id: downloadProgressBar
                 anchors.bottom: parent.bottom
@@ -140,15 +155,9 @@ Item {
                 anchors.bottomMargin: 1
                 anchors.leftMargin: 1
                 anchors.rightMargin: 1
-                visible: false
                 z: 3
-                progress: model.mediaDownloadProgress
-                onProgressChanged: {
-                    if (progress === 1)
-                        visible = false
-                    else
-                        visible = true
-                }
+                progress: Math.max(model.mediaDownloadProgress, root.downloading ? 0.05 : 0)
+                visible: !model.downloaded && (root.downloading || (progress > 0 && progress < 1))
             }
         }
 
@@ -221,26 +230,25 @@ Item {
         }
     }
 
+    TapHandler {
+        acceptedButtons: Qt.LeftButton
+        gesturePolicy: TapHandler.ReleaseWithinBounds
+        onTapped: {
+            if (Globals.bookSelectionModeEnabled) {
+                checkBox.checked = !checkBox.checked
+                Globals.selectedBooks.push(model.uuid)
+                return
+            }
+            root.leftButtonClicked(index)
+        }
+    }
+
     MouseArea {
         id: bookArea
         anchors.fill: parent
-        acceptedButtons: Qt.AllButtons
+        acceptedButtons: Qt.RightButton
         cursorShape: Qt.PointingHandCursor
-
-        // Delegate mouse clicks events to parent
-        onClicked: mouse => {
-                       if (mouse.button === Qt.LeftButton) {
-                           if (Globals.bookSelectionModeEnabled) {
-                               checkBox.checked = checkBox.checked ? false : true
-                               Globals.selectedBooks.push(model.uuid)
-                               return
-                           }
-
-                           root.leftButtonClicked(root.index)
-                       } else if (mouse.button === Qt.RightButton) {
-                           root.rightButtonClicked(root.index, mouse)
-                       }
-                   }
+        onClicked: mouse => root.rightButtonClicked(index, mouse)
     }
 
     RowLayout {
@@ -284,17 +292,15 @@ Item {
             MouseArea {
                 id: moreOptionsArea
                 anchors.fill: parent
+                z: 10
+                preventStealing: true
                 hoverEnabled: true
                 cursorShape: Qt.PointingHandCursor
 
-                onClicked: mouse => {
-                               if (mouse.button === Qt.LeftButton) {
-                                   let point = mapToItem(bookArea,
-                                                         Qt.point(mouse.x,
-                                                                  mouse.y))
-                                   root.moreOptionClicked(root.index, point)
-                               }
-                           }
+                onClicked: {
+                    let point = mapToItem(root, 0, 0)
+                    root.moreOptionClicked(index, point)
+                }
             }
         }
     }

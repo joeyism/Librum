@@ -99,6 +99,7 @@ signals:
     void goToPosition(int pageNumber, int y);
     void selectText(int pageNumber, QPointF left, QPointF right);
     void textSelectionFinished(float centerX, float topY);
+    void touchSelectionMenuHidden();
     void highlightSelected(float centerX, float topY, const QString& uuid);
     void noSearchHitsFound();
     void searchWholeWordsChanged();

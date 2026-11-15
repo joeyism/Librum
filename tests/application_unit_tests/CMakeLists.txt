@@ -13,6 +13,7 @@ add_executable(application_unit_tests
                     utility/test_enum.hpp
                     utility/enum_utils_tests.cpp
                     utility/book_merger_tests.cpp
+                    utility/touch_selection_session_tests.cpp
     )
 
 target_link_libraries(application_unit_tests

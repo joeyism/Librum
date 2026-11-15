@@ -38,9 +38,16 @@ Customize Librum to make it personal to you
 
 # Where can I get Librum?
 
-Simply go to https://librumreader.com to download Librum.
+Official desktop builds: https://librumreader.com
 
-If you want to build Librum from source, follow the instructions [here](#build-guide).
+This repository also contains an **unofficial Android stop-gap**. It is not the
+planned mobile app. It runs the **desktop** UI on a phone or tablet so you can
+log in to an existing Librum account, sync the library, and read books. Touch
+selection, zoom, and page-turn are experimental.
+
+See [Android (unofficial)](#android-unofficial) to build an APK.
+
+If you want to build the desktop app from source, follow the instructions [here](#build-guide).
 
 <br>
 
@@ -133,7 +140,7 @@ We support:
 - GNU/Linux
 - MacOS
 - IOS (Coming Soon)
-- Android (Coming Soon)
+- Android (unofficial stop-gap in this tree; official app still coming)
 <br>
 
 ### Supported formats
@@ -170,6 +177,72 @@ These features include:
 Want a new feature? Feel free to leave a feature request ticket!
 
 <br><br>
+
+# Android (unofficial)
+
+This tree can produce a debug APK of the **desktop** reader. It is a stop-gap,
+not a supported mobile product.
+
+**What works:** login, library list, cloud download of books, opening PDFs,
+scroll / pinch-zoom / horizontal page-turn.
+
+**What is rough:** text selection (long-press), highlight menu placement, and
+some ListView recycling crashes may still exist. Do not treat this as
+production-ready.
+
+### Prerequisites
+- Qt **6.5.3** with the **Android arm64-v8a** kit and a matching host Qt
+- Android NDK **26.1.10909125**
+- Android SDK platform **android-33** and build-tools **33.0.2**
+  (Qt 6.5’s aapt2 cannot read newer platform jars such as android-35)
+- JDK 17
+- Host `clang` (for MuPDF’s libclang wrapper; `clang-18` / `clang-17` is fine)
+- OpenSSL Android extras under `$ANDROID_SDK_ROOT/android_openssl/ssl_3/arm64-v8a/`
+  (Qt’s `android_openssl` repo)
+
+### Build
+```sh
+git clone --recursive https://github.com/joeyism/Librum.git
+cd Librum
+
+export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+export ANDROID_SDK_ROOT="$HOME/Android/Sdk"
+export ANDROID_NDK="$ANDROID_SDK_ROOT/ndk/26.1.10909125"
+
+cmake -S . -B build-android \
+  -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK/build/cmake/android.toolchain.cmake" \
+  -DANDROID_ABI=arm64-v8a \
+  -DANDROID_PLATFORM=android-23 \
+  -DCMAKE_PREFIX_PATH="$HOME/Qt/6.5.3/android_arm64_v8a" \
+  -DQT_HOST_PATH=/usr/local/Qt-6.5.3 \
+  -DBUILD_TESTS=Off \
+  -DCMAKE_BUILD_TYPE=Debug
+
+cmake --build build-android -j "$(nproc)"
+```
+
+The first MuPDF wrap is slow. CMake applies
+`cmake/patches/mupdf-wrap-libclang.patch` so you do not need a forked MuPDF.
+
+Package with Qt 6.5’s `androiddeployqt`, forcing build-tools 33.0.2 and
+`--android-platform android-33`:
+
+```sh
+python3 -c 'import json,sys; p="build-android/src/android-librum-deployment-settings.json"; d=json.load(open(p)); d["sdkBuildToolsRevision"]="33.0.2"; json.dump(d,open(p,"w"),indent=3)'
+
+"$QT_HOST_PATH/bin/androiddeployqt" \
+  --input build-android/src/android-librum-deployment-settings.json \
+  --output build-android/src/android-build \
+  --android-platform android-33 \
+  --jdk "$JAVA_HOME"
+
+adb install -r build-android/src/android-build/build/outputs/apk/debug/android-build-debug.apk
+```
+
+Adjust `CMAKE_PREFIX_PATH` and `QT_HOST_PATH` to your Qt install. The APK
+package id is `org.qtproject.example.librum`.
+
+<br>
 
 # Build Guide
 

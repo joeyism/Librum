@@ -35,10 +35,8 @@
 #include "user_controller.hpp"
 #include "word_definition_dto.hpp"
 
-#if !defined(Q_OS_ANDROID) && !defined(Q_OS_IOS)
-    #include "key_sequence_recorder.hpp"
-    #include "page_view.hpp"
-#endif
+#include "key_sequence_recorder.hpp"
+#include "page_view.hpp"
 
 
 using namespace adapters::controllers;
@@ -85,10 +83,8 @@ int main(int argc, char* argv[])
     qRegisterMetaType<adapters::dtos::WordTypeDto>();
     qRegisterMetaType<adapters::dtos::WordDefinitionDto>();
 
-#if !defined(Q_OS_ANDROID) && !defined(Q_OS_IOS)
-    qmlRegisterType<cpp_elements::KeySequenceRecorder>("Librum.elements", 1, 0, "KeySequenceRecorder");
     qmlRegisterType<cpp_elements::PageView>("Librum.elements", 1, 0, "PageView");
-#endif
+    qmlRegisterType<cpp_elements::KeySequenceRecorder>("Librum.elements", 1, 0, "KeySequenceRecorder");
 
     // Authentication Stack
     auto* authenticationService =

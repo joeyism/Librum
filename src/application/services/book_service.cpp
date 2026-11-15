@@ -3,6 +3,7 @@
 #include <QApplication>
 #include <QDebug>
 #include <QDesktopServices>
+#include <QFile>
 #include <string>
 #include "highlight.hpp"
 #include "utils/book_searcher.hpp"
@@ -26,7 +27,20 @@ void BookService::setUp(QUuid uuid)
 
     m_uuid = uuid;
     auto book = getBook();
-    auto stdFilePath = book->getFilePath().toStdString();
+    if(book == nullptr)
+    {
+        qWarning() << "Cannot open book: no book with uuid" << uuid;
+        return;
+    }
+
+    auto filePath = book->getFilePath();
+    if(filePath.isEmpty() || !QFile::exists(filePath))
+    {
+        qWarning() << "Cannot open book, file missing:" << filePath;
+        return;
+    }
+
+    auto stdFilePath = filePath.toStdString();
     m_fzDocument = std::make_unique<mupdf::FzDocument>(stdFilePath.c_str());
 
     m_bookSearcher = std::make_unique<BookSearcher>(m_fzDocument.get());

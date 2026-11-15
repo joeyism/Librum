@@ -228,6 +228,7 @@ BookOperationStatus LibraryService::downloadBookMedia(const QUuid& uuid)
         return BookOperationStatus::BookDoesNotExist;
     }
 
+    setMediaDownloadProgressForBook(uuid, 1, 100);
     m_libraryStorageManager->downloadBookMedia(uuid);
     return BookOperationStatus::Success;
 }
@@ -391,7 +392,9 @@ void LibraryService::setMediaDownloadProgressForBook(const QUuid& uuid,
         return;
     }
 
-    auto progress = static_cast<double>(bytesReceived) / bytesTotal;
+    double progress = bytesTotal > 0
+                          ? static_cast<double>(bytesReceived) / bytesTotal
+                          : 0.05;
     book->setMediaDownloadProgress(progress);
     emit downloadingBookMediaProgressChanged(getBookIndex(uuid));
 }

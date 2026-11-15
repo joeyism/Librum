@@ -1,25 +1,15 @@
 set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS ON)
 
 
-# Build
-if(ANDROID)
-    set(QML_SOURCE_QRC_PATH "mobile/qmlSourcesMobile.qrc")
-else()
-    set(QML_SOURCE_QRC_PATH "desktop/qmlSourcesDesktop.qrc")
-endif()
-
-if(ANDROID)
-    set(CPP_SOURCE_FOLDER "${CMAKE_CURRENT_SOURCE_DIR}/mobile/modules/CppElements")
-    set(CPP_FILES)
-else()
-    set(CPP_SOURCE_FOLDER "${CMAKE_CURRENT_SOURCE_DIR}/desktop/modules/CppElements")
-    set(CPP_FILES
-        desktop/modules/CppElements/key_sequence_recorder.cpp
-        desktop/modules/CppElements/key_sequence_recorder.hpp
-        desktop/modules/CppElements/page_view.cpp
-        desktop/modules/CppElements/page_view.hpp
-    )
-endif()
+# Build — use the desktop reader on all platforms, including Android.
+set(QML_SOURCE_QRC_PATH "desktop/qmlSourcesDesktop.qrc")
+set(CPP_SOURCE_FOLDER "${CMAKE_CURRENT_SOURCE_DIR}/desktop/modules/CppElements")
+set(CPP_FILES
+    desktop/modules/CppElements/key_sequence_recorder.cpp
+    desktop/modules/CppElements/key_sequence_recorder.hpp
+    desktop/modules/CppElements/page_view.cpp
+    desktop/modules/CppElements/page_view.hpp
+)
 
 add_library(presentation
                 SHARED

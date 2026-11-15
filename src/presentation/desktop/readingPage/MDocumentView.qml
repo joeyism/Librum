@@ -14,6 +14,7 @@ import "DocumentNavigation.js" as NavigationLogic
 Pane {
     id: root
     property var lastSelectedPage
+    readonly property bool touchReading: Qt.platform.os === "android"
     signal clicked
     signal zoomFactorChanged(real factor)
 
@@ -42,9 +43,20 @@ Pane {
         }
 
         function onTextSelectionFinished(centerX, topY) {
-            selectionOptionsPopup.highlight = ""
+            if (typeof centerX !== "number" || typeof topY !== "number")
+                return
+            if (isNaN(centerX) || isNaN(topY))
+                return
 
-            internal.openSelectionOptionsPopup(centerX, topY)
+            selectionOptionsPopup.highlight = ""
+            Qt.callLater(function () {
+                internal.openSelectionOptionsPopup(centerX, topY)
+            })
+        }
+
+        function onTouchSelectionMenuHidden() {
+            selectionOptionsPopup.close()
+            colorSelectionPopup.close()
         }
 
         function onHighlightSelected(centerX, topY, highlightUuid) {
@@ -84,6 +96,12 @@ Pane {
     }
 
     Timer {
+        id: ignoreScrollPopupCloseTimer
+        interval: 400
+        onTriggered: internal.ignoreScrollPopupClose = false
+    }
+
+    Timer {
         id: hideCursorTimer
         interval: SettingsController.behaviorSettings.HideCursorAfterDelay
         repeat: true
@@ -113,6 +131,47 @@ Pane {
         onPressed: mouse.accepted = false
         onReleased: mouse.accepted = false
 
+        PinchHandler {
+            id: pinch
+            target: null
+            acceptedDevices: PointerDevice.TouchScreen
+            property real startZoom: 1
+
+            onActiveChanged: if (active)
+                                 startZoom = BookController.zoom
+            onScaleChanged: if (active)
+                                NavigationLogic.zoom(startZoom * scale)
+        }
+
+        PointHandler {
+            id: pageTurnHandler
+            acceptedDevices: PointerDevice.TouchScreen
+            grabPermissions: PointerHandler.TakeOverForbidden
+            property real startX: 0
+            property real startY: 0
+            property bool tracking: false
+
+            onActiveChanged: {
+                if (active) {
+                    startX = point.position.x
+                    startY = point.position.y
+                    tracking = true
+                    return
+                }
+                if (!tracking)
+                    return
+                tracking = false
+                if (!root.touchReading || internal.touchSelecting || pinch.active)
+                    return
+                if (pageView.contentWidth > pageView.width + 4)
+                    return
+                let dx = point.position.x - startX
+                let dy = point.position.y - startY
+                if (Math.abs(dx) > 72 && Math.abs(dx) > Math.abs(dy) * 1.25)
+                    dx < 0 ? root.nextPage() : root.previousPage()
+            }
+        }
+
         ListView {
             id: pageView
             readonly property int scrollSpeed: 5500
@@ -126,11 +185,12 @@ Pane {
             contentWidth: pageView.widestItem
             anchors.centerIn: parent
             flickableDirection: Flickable.AutoFlickDirection
-            flickDeceleration: 150000
-            interactive: false
+            flickDeceleration: root.touchReading ? 2500 : 150000
+            pressDelay: root.touchReading ? 500 : 0
+            interactive: root.touchReading && !pinch.active
             clip: true
             cacheBuffer: 1000
-            maximumFlickVelocity: scrollSpeed
+            maximumFlickVelocity: root.touchReading ? 5000 : scrollSpeed
             boundsMovement: Flickable.StopAtBounds
             boundsBehavior: Flickable.StopAtBounds
             model: BookController.pageCount
@@ -152,16 +212,44 @@ Pane {
                 }
 
                 onMouseHoverMoved: internal.showCursor()
+                onTouchSelectionEnded: internal.touchSelecting = false
+
+                TapHandler {
+                    acceptedDevices: PointerDevice.TouchScreen
+                    longPressThreshold: 0.4
+                    grabPermissions: PointerHandler.CanTakeOverFromAnything
+                    property bool ignoreNextTap: false
+
+                    onTapped: {
+                        if (ignoreNextTap) {
+                            ignoreNextTap = false
+                            return
+                        }
+                        page.clearTouchSelection()
+                    }
+                    onLongPressed: {
+                        ignoreNextTap = true
+                        pageView.cancelFlick()
+                        page.beginTouchSelection(point.position.x,
+                                                 point.position.y)
+                    }
+                }
             }
 
             // Set the book's current page once the model is loaded
             onContentYChanged: {
                 NavigationLogic.updateCurrentPageCounter()
+                if (internal.touchSelecting
+                        || internal.ignoreScrollPopupClose)
+                    return
                 selectionOptionsPopup.close()
                 colorSelectionPopup.close()
             }
 
             onContentXChanged: {
+                if (internal.touchSelecting
+                        || internal.ignoreScrollPopupClose)
+                    return
                 selectionOptionsPopup.close()
                 colorSelectionPopup.close()
             }
@@ -322,6 +410,8 @@ Pane {
     QtObject {
         id: internal
         property string optionNameCursorModeHiddenAfterDelay: "Hidden after delay"
+        property bool touchSelecting: false
+        property bool ignoreScrollPopupClose: false
 
         function openSelectionOptionsPopup(centerX, topY) {
             if (centerX === -1 && topY === -1) {
@@ -331,12 +421,23 @@ Pane {
             selectionOptionsPopup.highlightCenterX = centerX
             selectionOptionsPopup.highlightTopY = topY
 
+            internal.ignoreScrollPopupClose = true
+            ignoreScrollPopupCloseTimer.restart()
             internal.openPopupAt(selectionOptionsPopup, centerX, topY)
         }
 
         function openPopupAt(popup, centerX, topY) {
-            let pageYOffset = pageView.contentY - activeFocusItem.y
-            let pageXOffset = pageView.contentX - activeFocusItem.x
+            if (!popup || typeof popup.open !== "function")
+                return
+            if (typeof centerX !== "number" || typeof topY !== "number")
+                return
+
+            let item = pageView.currentItem
+            if (!item)
+                return
+
+            let pageYOffset = pageView.contentY - item.y
+            let pageXOffset = pageView.contentX - item.x
             let posX = centerX + pageView.x - popup.width / 2 - pageXOffset
             let posY = topY - popup.height - pageYOffset - 6
 
@@ -346,8 +447,16 @@ Pane {
 
             let spaceToLeft = (pageView.x + pageView.width) - (posX + popup.width)
 
-            popup.x = posX
-            popup.y = posY
+            let localX = Math.max(8, Math.min(posX, root.width - popup.width - 8))
+            let localY = Math.max(8, Math.min(posY, root.height - popup.height - 8))
+            if (popup.parent && popup.parent !== root) {
+                let mapped = root.mapToItem(popup.parent, localX, localY)
+                popup.x = mapped.x
+                popup.y = mapped.y
+            } else {
+                popup.x = localX
+                popup.y = localY
+            }
 
             popup.open()
         }

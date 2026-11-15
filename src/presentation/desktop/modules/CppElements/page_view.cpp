@@ -1,6 +1,10 @@
 #include "page_view.hpp"
 #include <QClipboard>
 #include <QDebug>
+#include <QMetaObject>
+#include <QMouseEvent>
+#include <QPointer>
+#include <cmath>
 #include <QDesktopServices>
 #include <QImage>
 #include <QObject>
@@ -14,11 +18,19 @@
 #include "fz_utils.hpp"
 #include "highlight.hpp"
 #include "page_controller.hpp"
+#include "touch_selection_session.hpp"
 
 using adapters::controllers::BookController;
 using adapters::controllers::PageController;
+using application::utility::TouchSelectionSession;
 using domain::entities::Highlight;
 using namespace application::core;
+
+namespace
+{
+TouchSelectionSession g_touchSession;
+QPointer<cpp_elements::PageView> g_touchPage;
+}  // namespace
 
 namespace cpp_elements
 {
@@ -33,13 +45,22 @@ cpp_elements::PageView::PageView()
     m_tripleClickTimer.setSingleShot(true);
 }
 
+qreal PageView::currentDevicePixelRatio() const
+{
+    auto* win = window();
+    return win != nullptr ? win->devicePixelRatio() : 1.0;
+}
+
 void PageView::setBookController(BookController* newBookController)
 {
     m_bookController = newBookController;
+    if(m_bookController == nullptr ||
+       m_bookController->getFzDocument() == nullptr)
+        return;
 
     m_pageController = std::make_unique<PageController>(
         m_bookController->getFzDocument(), m_pageNumber,
-        window()->devicePixelRatio());
+        currentDevicePixelRatio());
     m_pageController->setZoom(m_bookController->getZoom());
 
     // Setup connections to the BookController
@@ -69,7 +90,7 @@ void PageView::setBookController(BookController* newBookController)
                 // current zoom we get from the page controller is zoom * dpr.
                 // Thus we need to reset it to the zoom without the dpr.
                 auto zoom = m_pageController->getZoom();
-                auto dpr = window()->devicePixelRatio();
+                auto dpr = currentDevicePixelRatio();
                 left = utils::scalePointToCurrentZoom(left, 1, zoom / dpr);
                 right = utils::scalePointToCurrentZoom(right, 1, zoom / dpr);
 
@@ -82,11 +103,15 @@ void PageView::setBookController(BookController* newBookController)
 
 int PageView::getImplicitWidth() const
 {
+    if(m_pageController == nullptr)
+        return 0;
     return m_pageController->getWidth();
 }
 
 int PageView::getImplicitHeight() const
 {
+    if(m_pageController == nullptr)
+        return 0;
     return m_pageController->getHeight();
 }
 
@@ -102,6 +127,9 @@ void PageView::setPageNumber(int newCurrentPage)
 
 void PageView::updateZoom(float newZoom)
 {
+    if(m_pageController == nullptr)
+        return;
+
     auto oldZoom = m_pageController->getZoom();
     m_pageController->setZoom(newZoom);
 
@@ -139,6 +167,8 @@ void PageView::geometryChange(const QRectF& newGeometry,
 QSGNode* PageView::updatePaintNode(QSGNode* node, UpdatePaintNodeData* nodeData)
 {
     Q_UNUSED(nodeData);
+    if(m_pageController == nullptr)
+        return node;
     QSGSimpleTextureNode* n = static_cast<QSGSimpleTextureNode*>(node);
     if(!n)
     {
@@ -152,13 +182,192 @@ QSGNode* PageView::updatePaintNode(QSGNode* node, UpdatePaintNodeData* nodeData)
     paintSelectionOnPage(painter);
     paintHighlightsOnPage(painter);
 
-    n->setTexture(window()->createTextureFromImage(image));
+    auto* win = window();
+    if(win == nullptr)
+        return n;
+
+    n->setTexture(win->createTextureFromImage(image));
     n->setRect(boundingRect());
     return n;
 }
 
+bool PageView::isSynthesizedTouch(const QMouseEvent* event) const
+{
+    return event->source() == Qt::MouseEventSynthesizedBySystem ||
+           event->source() == Qt::MouseEventSynthesizedByQt;
+}
+
+QPointF PageView::snapTouchToText(qreal x, qreal y) const
+{
+    if(m_pageController == nullptr)
+        return QPointF(x, y);
+
+    const int yOffsets[] = { 28, 40, 16, 52, 8, 0, 64, -8 };
+    for(int dy : yOffsets)
+    {
+        QPointF candidate(x, y - dy);
+        if(candidate.y() < 0)
+            continue;
+        if(m_pageController->pointIsAboveText(candidate))
+            return candidate;
+    }
+
+    const int xOffsets[] = { -16, 16, -32, 32 };
+    for(int dx : xOffsets)
+    {
+        QPointF candidate(x + dx, y - 28);
+        if(candidate.y() < 0)
+            continue;
+        if(m_pageController->pointIsAboveText(candidate))
+            return candidate;
+    }
+
+    return QPointF(x, qMax(0.0, y - 28.0));
+}
+
+void PageView::emitSelectionFinished()
+{
+    if(m_pageController == nullptr || m_bookController == nullptr)
+        return;
+
+    auto rects = m_pageController->getBufferedSelectionRects();
+    if(rects.isEmpty())
+        return;
+
+    QList<QRectF> restoredRects;
+    restoredRects.reserve(rects.size());
+    for(auto rect : rects)
+    {
+        utils::restoreQRect(rect, m_pageController->getZoom());
+        utils::scaleQRectFToZoom(rect, m_pageController->getZoom() /
+                                           currentDevicePixelRatio());
+        restoredRects.push_back(rect);
+    }
+
+    auto positions = getCenterXAndTopYFromRects(restoredRects);
+    if(!std::isfinite(positions.first) || !std::isfinite(positions.second))
+        return;
+
+    emit m_bookController->textSelectionFinished(positions.first,
+                                                 positions.second);
+}
+
+void PageView::beginTouchSelection(qreal x, qreal y)
+{
+    if(m_pageController == nullptr)
+        return;
+
+    if(g_touchPage != nullptr && g_touchPage != this)
+        g_touchPage->removeSelection();
+
+    g_touchPage = this;
+    g_touchSession.longPress();
+    m_touchSelecting = true;
+    forceActiveFocus();
+    auto point = snapTouchToText(x, y);
+    m_touchAnchor = point;
+    m_selectionStart = point;
+    m_selectionEnd = point;
+    selectSingleWord();
+    grabMouse();
+    QMetaObject::invokeMethod(
+        this,
+        [this]()
+        {
+            if(m_pageController == nullptr)
+                return;
+            if(!g_touchSession.menuVisible())
+                return;
+            emitSelectionFinished();
+        },
+        Qt::QueuedConnection);
+}
+
+void PageView::updateTouchSelection(qreal x, qreal y)
+{
+    if(!m_touchSelecting || m_pageController == nullptr)
+        return;
+
+    if(g_touchSession.menuVisible())
+    {
+        g_touchSession.dragStarted();
+        if(m_bookController != nullptr)
+            emit m_bookController->touchSelectionMenuHidden();
+    }
+
+    m_selectionStart = m_touchAnchor;
+    m_selectionEnd = snapTouchToText(x, y);
+    createSelection();
+}
+
+void PageView::finishTouchSelection()
+{
+    if(!m_touchSelecting)
+        return;
+
+    g_touchSession.released();
+    m_touchSelecting = false;
+    ungrabMouse();
+    QMetaObject::invokeMethod(
+        this,
+        [this]()
+        {
+            if(m_pageController == nullptr)
+                return;
+            if(!g_touchSession.menuVisible())
+                return;
+            emitSelectionFinished();
+        },
+        Qt::QueuedConnection);
+}
+
+void PageView::clearTouchSelection()
+{
+    g_touchSession.tap();
+    if(g_touchPage != nullptr)
+    {
+        g_touchPage->removeSelection();
+        g_touchPage = nullptr;
+    }
+    m_touchSelecting = false;
+    ungrabMouse();
+    if(m_bookController != nullptr)
+        emit m_bookController->touchSelectionMenuHidden();
+}
+
+void PageView::handleTouchTap(qreal x, qreal y)
+{
+    if(m_pageController == nullptr || m_bookController == nullptr)
+        return;
+
+    QPoint point(static_cast<int>(x), static_cast<int>(y));
+    forceActiveFocus();
+
+    auto highlight = m_bookController->getHighlightAtPoint(point, m_pageNumber);
+    if(highlight != nullptr)
+    {
+        handleClickingOnHighlight(highlight);
+        return;
+    }
+
+    if(m_pageController->pointIsAboveLink(point))
+    {
+        auto uri = m_pageController->getLinkUriAtPoint(point);
+        m_bookController->followLink(uri);
+        return;
+    }
+
+    clearTouchSelection();
+}
+
 void PageView::mouseDoubleClickEvent(QMouseEvent* event)
 {
+    if(isSynthesizedTouch(event))
+    {
+        event->ignore();
+        return;
+    }
+
     if(event->button() == Qt::RightButton)
         return;
 
@@ -179,7 +388,16 @@ void PageView::mouseDoubleClickEvent(QMouseEvent* event)
 
 void PageView::mousePressEvent(QMouseEvent* event)
 {
+    if(isSynthesizedTouch(event) && g_touchPage != this)
+    {
+        event->ignore();
+        return;
+    }
+
     if(event->button() == Qt::RightButton)
+        return;
+
+    if(m_pageController == nullptr || m_bookController == nullptr)
         return;
 
     int mouseX = event->position().x();
@@ -220,7 +438,7 @@ void PageView::handleClickingOnHighlight(const Highlight* highlight)
     {
         auto qRectF = rect.getQRect();
         utils::scaleQRectFToZoom(
-            qRectF, m_pageController->getZoom() / window()->devicePixelRatio());
+            qRectF, m_pageController->getZoom() / currentDevicePixelRatio());
         qRects.append(qRectF);
     }
     auto positions = getCenterXAndTopYFromRects(qRects);
@@ -233,6 +451,14 @@ void PageView::handleClickingOnHighlight(const Highlight* highlight)
 
 void PageView::mouseReleaseEvent(QMouseEvent* event)
 {
+    if(isSynthesizedTouch(event))
+    {
+        if(g_touchPage == this && m_touchSelecting)
+            finishTouchSelection();
+        event->ignore();
+        return;
+    }
+
     int mouseX = event->position().x();
     int mouseY = event->position().y();
     QPoint mousePoint(mouseX, mouseY);
@@ -259,21 +485,7 @@ void PageView::mouseReleaseEvent(QMouseEvent* event)
     }
     else if(!m_startedMousePressOnHighlight)
     {
-        auto rects = m_pageController->getBufferedSelectionRects();
-        QList<QRectF> restoredRects;
-        restoredRects.reserve(rects.size());
-        for(auto rect : rects)
-        {
-            utils::restoreQRect(rect, m_pageController->getZoom());
-            utils::scaleQRectFToZoom(rect, m_pageController->getZoom() /
-                                               window()->devicePixelRatio());
-            restoredRects.push_back(rect);
-        }
-
-        auto positions = getCenterXAndTopYFromRects(restoredRects);
-
-        emit m_bookController->textSelectionFinished(positions.first,
-                                                     positions.second);
+        emitSelectionFinished();
     }
 
     m_doubleClickHold = false;
@@ -303,6 +515,17 @@ QPair<float, float> PageView::getCenterXAndTopYFromRects(
 
 void PageView::mouseMoveEvent(QMouseEvent* event)
 {
+    if(isSynthesizedTouch(event))
+    {
+        if(g_touchPage == this && m_touchSelecting)
+        {
+            updateTouchSelection(event->position().x(), event->position().y());
+            return;
+        }
+        event->ignore();
+        return;
+    }
+
     if(event->buttons() == Qt::RightButton)
         return;
 
@@ -538,6 +761,9 @@ void PageView::createSelection()
 
 void PageView::removeSelection()
 {
+    if(m_pageController == nullptr)
+        return;
+
     m_pageController->clearBufferedSelectionRects();
     update();
 
@@ -631,6 +857,9 @@ bool PageView::rectsAreOnSameLine(const QRectF& rect1, const QRectF& rect2)
 
 void PageView::setColorInverted(bool newColorInverted)
 {
+    if(m_pageController == nullptr)
+        return;
+
     // This method gets called on initialisation of the page item, but we don't
     // want to redraw it then, so we skip it if it's called for the first time.
     m_pageController->setInvertColor(newColorInverted);
@@ -648,6 +877,8 @@ void PageView::setIncludeNewLinesInCopiedText(
 
 float PageView::getYOffset() const
 {
+    if(m_pageController == nullptr)
+        return 0;
     return m_pageController->getYOffset();
 }
 

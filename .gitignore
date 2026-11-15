@@ -71,3 +71,15 @@ todo.txt
 
 # add MacOS DS_Store file
 .DS_Store
+
+# Local Android/Qt toolchain (never commit)
+/6.5.3/
+aqtinstall.log
+*.apk
+
+# MuPDF wrap leftovers (also ignored as untracked in the submodule)
+libs/mupdf/venv-mupdfwrap-*/
+libs/mupdf/scripts/__pycache__/
+libs/mupdf/scripts/wrap/__pycache__/
+libs/mupdf/platform/c++/
+libs/mupdf/build/

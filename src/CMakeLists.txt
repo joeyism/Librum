@@ -1,9 +1,5 @@
 # Configuration
-if(ANDROID)
-    set(QML_IMPORT_PATH "${CMAKE_CURRENT_SOURCE_DIR}/presentation/mobile/modules CACHE STRING "Qml modules" FORCE)
-else()
-    set(QML_IMPORT_PATH "${CMAKE_CURRENT_SOURCE_DIR}/presentation/desktop/modules CACHE STRING "Qml modules" FORCE)
-endif()
+set(QML_IMPORT_PATH "${CMAKE_CURRENT_SOURCE_DIR}/presentation/desktop/modules" CACHE STRING "Qml modules" FORCE)
 
 # Language
 set(CMAKE_CXX_STANDARD 20)
@@ -55,6 +51,8 @@ if(ANDROID)
         ${ANDROID_SDK_ROOT}/android_openssl/ssl_3/arm64-v8a/libcrypto_3.so
         ${ANDROID_SDK_ROOT}/android_openssl/ssl_3/arm64-v8a/libssl_3.so
         ${CUSTOM_ANDROID_EXTRA_LIBS_STRING})
+    # Qt 6.5's AGP/aapt2 cannot read the android-35 platform jar.
+    set(QT_ANDROID_SDK_BUILD_TOOLS_REVISION "33.0.2" CACHE STRING "" FORCE)
 endif()
 
 target_compile_definitions(librum

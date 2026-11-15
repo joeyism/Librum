@@ -240,18 +240,43 @@ void LibraryStorageAccess::downloadCoverForBook(const QString& authToken,
             });
 }
 
+namespace
+{
+QString bookExtensionFromReply(const QNetworkReply* reply)
+{
+    auto extension =
+        QString::fromUtf8(reply->rawHeader("Extension")).trimmed().toLower();
+    if(!extension.isEmpty() && !extension.contains(' '))
+        return extension;
+    return QStringLiteral("pdf");
+}
+}  // namespace
+
 void LibraryStorageAccess::downloadBookMedia(const QString& authToken,
                                              const QUuid& uuid)
 {
     auto endpoint = domain + data::downloadBookDataEndpoint + "/" +
                     uuid.toString(QUuid::WithoutBraces);
-    auto request = createRequest(endpoint, authToken);
+
+    QNetworkRequest request { QUrl(endpoint) };
+    request.setRawHeader("Authorization", "Bearer " + authToken.toUtf8());
+    request.setRawHeader("Accept", "application/octet-stream");
+    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
+                         QNetworkRequest::NoLessSafeRedirectPolicy);
+    request.setAttribute(QNetworkRequest::Http2AllowedAttribute, false);
+    request.setTransferTimeout(180000);
+
     auto reply = m_networkAccessManager.get(request);
+    reply->setReadBufferSize(0);
 
     connect(reply, &QNetworkReply::readyRead, this,
             [this, reply, uuid]()
             {
-                if(api_error_helper::apiRequestFailed(reply, 200))
+                auto statusCode =
+                    reply->attribute(QNetworkRequest::HttpStatusCodeAttribute)
+                        .toInt();
+                if(statusCode != 0 &&
+                   api_error_helper::apiRequestFailed(reply, 200))
                 {
                     api_error_helper::logErrorMessage(reply,
                                                       "Downloading book media");
@@ -260,18 +285,21 @@ void LibraryStorageAccess::downloadBookMedia(const QString& authToken,
                     return;
                 }
 
-                // The server sends the book format in a header
-                QString bookFormat = reply->rawHeader("Format");
                 emit downloadingBookMediaChunkReady(reply->readAll(), false,
-                                                    uuid, bookFormat);
+                                                    uuid,
+                                                    bookExtensionFromReply(reply));
             });
 
     connect(reply, &QNetworkReply::finished, this,
             [this, reply, uuid]()
             {
-                QString bookFormat = reply->rawHeader("Format");
-                emit downloadingBookMediaChunkReady(QByteArray(), true, uuid,
-                                                    bookFormat);
+                if(reply->error() != QNetworkReply::NoError)
+                {
+                    reply->deleteLater();
+                    return;
+                }
+                emit downloadingBookMediaChunkReady(
+                    QByteArray(), true, uuid, bookExtensionFromReply(reply));
 
                 reply->deleteLater();
             });

@@ -55,6 +55,11 @@ public:
     Q_INVOKABLE void copyHighlightedText(const QString& uuid);
     Q_INVOKABLE QString getSelectedText();
     Q_INVOKABLE QString getHighlightedText(const QString& uuid);
+    Q_INVOKABLE void beginTouchSelection(qreal x, qreal y);
+    Q_INVOKABLE void updateTouchSelection(qreal x, qreal y);
+    Q_INVOKABLE void finishTouchSelection();
+    Q_INVOKABLE void clearTouchSelection();
+    Q_INVOKABLE void handleTouchTap(qreal x, qreal y);
 
     Q_INVOKABLE void removeSelection();
     Q_INVOKABLE void setPointingCursor();
@@ -67,6 +72,7 @@ public:
 
 signals:
     void mouseHoverMoved();
+    void touchSelectionEnded();
 
 private slots:
     void updateZoom(float newZoom);
@@ -96,6 +102,10 @@ private:
         const domain::entities::Highlight* highlight);
     void removeConflictingHighlights(domain::entities::Highlight& highlight);
     bool mouseAboveSelection(const QPointF mouse);
+    bool isSynthesizedTouch(const QMouseEvent* event) const;
+    QPointF snapTouchToText(qreal x, qreal y) const;
+    void emitSelectionFinished();
+    qreal currentDevicePixelRatio() const;
 
     void setCorrectCursor(int x, int y);
 
@@ -113,6 +123,8 @@ private:
     QTimer m_tripleClickTimer;
     bool m_doubleClickHold = false;
     bool m_includeNewLinesInCopiedText = false;
+    bool m_touchSelecting = false;
+    QPointF m_touchAnchor;
 };
 
 }  // namespace cpp_elements
